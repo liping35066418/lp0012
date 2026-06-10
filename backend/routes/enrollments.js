@@ -10,14 +10,23 @@ router.post('/', authMiddleware, (req, res) => {
     return res.json({ code: 400, message: '请填写必填项' });
   }
   const tx = db.transaction(() => {
-    const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(club_id);
+    const club = db.prepare(`
+      SELECT c.*,
+        (SELECT COUNT(*) FROM enrollments e WHERE e.club_id = c.id AND e.status = 'pending') as pending_enrollments,
+        (SELECT COUNT(*) FROM members m WHERE m.club_id = c.id) as approved_members
+      FROM clubs c WHERE c.id = ?
+    `).get(club_id);
     if (!club) throw new Error('社团不存在');
-    if (club.current_members >= club.max_members) {
-      throw new Error('报名人数已达上限');
+    const approved = club.approved_members || 0;
+    const pending = club.pending_enrollments || 0;
+    if (approved + pending >= club.max_members) {
+      throw new Error('名额已被占满，请等待审核结果');
     }
     if (req.user) {
-      const exists = db.prepare('SELECT COUNT(*) as count FROM enrollments WHERE club_id = ? AND user_id = ?').get(club_id, req.user.id);
-      if (exists.count > 0) throw new Error('您已报名过该社团');
+      const pending = db.prepare('SELECT COUNT(*) as count FROM enrollments WHERE club_id = ? AND user_id = ? AND status = ?').get(club_id, req.user.id, 'pending');
+      if (pending.count > 0) throw new Error('您已报名过该社团，请等待审核结果');
+      const isMember = db.prepare('SELECT COUNT(*) as count FROM members WHERE club_id = ? AND user_id = ?').get(club_id, req.user.id);
+      if (isMember.count > 0) throw new Error('您已是该社团成员');
     }
     const info = db.prepare(`INSERT INTO enrollments 
       (user_id, club_id, real_name, gender, student_id, phone, email, department, grade, reason, skills) 
@@ -89,9 +98,14 @@ router.post('/:id/review', authMiddleware, requireRole('admin', 'officer'), (req
     const enrollment = db.prepare('SELECT * FROM enrollments WHERE id = ?').get(req.params.id);
     if (!enrollment) throw new Error('报名记录不存在');
     if (enrollment.status !== 'pending') throw new Error('该报名已被处理');
-    const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(enrollment.club_id);
+    const club = db.prepare(`
+      SELECT c.*,
+        (SELECT COUNT(*) FROM members m WHERE m.club_id = c.id) as approved_members
+      FROM clubs c WHERE c.id = ?
+    `).get(enrollment.club_id);
     if (status === 'approved') {
-      if (club.current_members >= club.max_members) {
+      const approved = club.approved_members || 0;
+      if (approved >= club.max_members) {
         throw new Error('社团人数已达上限，无法通过审核');
       }
       db.prepare('UPDATE clubs SET current_members = current_members + 1 WHERE id = ?').run(enrollment.club_id);

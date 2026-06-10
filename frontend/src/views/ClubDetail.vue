@@ -11,12 +11,21 @@
             <div class="club-tags">
               <el-tag type="primary" effect="dark" round>社长：{{ club.president }}</el-tag>
               <el-tag type="success" effect="dark" round>联系电话：{{ club.contact_phone }}</el-tag>
-              <el-tag :type="getCapacityType(club)" effect="dark" round>成员 {{ club.current_members }}/{{ club.max_members }}</el-tag>
+              <el-tag type="success" effect="dark" round>已通过 {{ approvedCount }}</el-tag>
+              <el-tag type="warning" effect="dark" round>待审核 {{ pendingCount }}</el-tag>
+              <el-tag type="info" effect="dark" round>上限 {{ club.max_members }}</el-tag>
             </div>
             <div class="club-actions">
-              <el-button type="primary" size="large" round @click="goEnroll" :disabled="club.current_members >= club.max_members">
-                {{ club.current_members >= club.max_members ? '名额已满' : '立即报名加入' }}
-              </el-button>
+              <template v-if="isMember">
+                <el-button type="danger" size="large" round @click="handleLeave" :loading="leaving">
+                  <el-icon><SwitchButton /></el-icon>退出社团
+                </el-button>
+              </template>
+              <template v-else>
+                <el-button type="primary" size="large" round @click="goEnroll" :disabled="isQuotaFull">
+                  {{ isQuotaFull ? '名额已占满（含待审）' : '立即报名加入' }}
+                </el-button>
+              </template>
               <el-button size="large" round @click="$router.back()">
                 <el-icon><ArrowLeft /></el-icon>返回列表
               </el-button>
@@ -87,7 +96,10 @@
               <div v-for="m in club.members.slice(0, 20)" :key="m.id" class="member-item">
                 <el-avatar :size="40" :src="m.avatar">{{ m.real_name?.charAt(0) }}</el-avatar>
                 <div class="m-info">
-                  <div class="m-name">{{ m.real_name }}</div>
+                  <div class="m-name">
+                    {{ m.real_name }}
+                    <el-tag v-if="isCurrentUser(m.id)" size="small" type="primary" effect="plain">我</el-tag>
+                  </div>
                   <el-tag size="small" :type="m.position === 'member' ? 'info' : 'warning'">{{ m.position }}</el-tag>
                 </div>
               </div>
@@ -100,10 +112,19 @@
               <div class="card-head"><el-icon><DataAnalysis /></el-icon>社团数据</div>
             </template>
             <el-progress :percentage="capacityPct" :stroke-width="12" :status="capacityStatus" />
+            <div class="quota-detail">
+              <el-tag type="success" effect="plain" size="small">已通过 {{ approvedCount }}</el-tag>
+              <el-tag type="warning" effect="plain" size="small">待审核 {{ pendingCount }}</el-tag>
+              <el-tag type="info" effect="plain" size="small">上限 {{ club.max_members }}</el-tag>
+            </div>
             <div class="stats-grid mt-20">
               <div class="stat-block">
-                <div class="num">{{ club.current_members }}</div>
-                <div class="label">当前成员</div>
+                <div class="num">{{ approvedCount }}</div>
+                <div class="label">已通过成员</div>
+              </div>
+              <div class="stat-block">
+                <div class="num">{{ pendingCount }}</div>
+                <div class="label">待审核申请</div>
               </div>
               <div class="stat-block">
                 <div class="num">{{ club.news?.length || 0 }}</div>
@@ -112,10 +133,6 @@
               <div class="stat-block">
                 <div class="num">{{ club.activities?.length || 0 }}</div>
                 <div class="label">开展活动</div>
-              </div>
-              <div class="stat-block">
-                <div class="num">{{ club.max_members }}</div>
-                <div class="label">最大容量</div>
               </div>
             </div>
           </el-card>
@@ -128,11 +145,15 @@
 <script setup>
 import { ref, onMounted, computed, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/utils/request';
+import { useUserStore } from '@/stores/user';
 
 const route = useRoute();
 const router = useRouter();
+const store = useUserStore();
 const loading = ref(false);
+const leaving = ref(false);
 const club = ref(null);
 
 const fetchClub = async () => {
@@ -160,12 +181,52 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleVisibility);
 });
 
+const approvedCount = computed(() => {
+  const c = club.value;
+  if (!c) return 0;
+  return (c.approved_members ?? c.current_members) || 0;
+});
+const pendingCount = computed(() => club.value?.pending_enrollments || 0);
+const isQuotaFull = computed(() => {
+  const c = club.value;
+  if (!c) return false;
+  return approvedCount.value + pendingCount.value >= c.max_members;
+});
+const isMember = computed(() => {
+  if (!store.isLogin || !club.value?.members) return false;
+  return club.value.members.some(m => m.id === store.user.id);
+});
+const isCurrentUser = (userId) => store.isLogin && store.user?.id === userId;
+
 const goEnroll = () => router.push(`/enroll/${club.value.id}`);
-const getCapacityType = (c) => c.current_members / c.max_members > 0.8 ? 'danger' : c.current_members / c.max_members > 0.5 ? 'warning' : 'success';
-const capacityPct = computed(() => club.value ? Math.round(club.value.current_members / club.value.max_members * 100) : 0);
+const capacityPct = computed(() => {
+  const c = club.value;
+  if (!c?.max_members) return 0;
+  return Math.round((approvedCount.value + pendingCount.value) / c.max_members * 100);
+});
 const capacityStatus = computed(() => capacityPct.value > 80 ? 'exception' : capacityPct.value > 50 ? 'warning' : 'success');
 const getDay = (d) => new Date(d).getDate();
 const getMonth = (d) => new Date(d).getMonth() + 1;
+
+const handleLeave = async () => {
+  try {
+    await ElMessageBox.confirm('确定要退出该社团吗？退出后名额将释放，如需再次加入需重新报名。', '确认退出', {
+      type: 'warning',
+      confirmButtonText: '确定退出',
+      cancelButtonText: '取消'
+    });
+  } catch (e) {
+    return;
+  }
+  leaving.value = true;
+  try {
+    await request.post(`/clubs/${club.value.id}/leave`);
+    ElMessage.success('退出社团成功');
+    await fetchClub();
+  } finally {
+    leaving.value = false;
+  }
+};
 </script>
 
 <style scoped>
@@ -193,6 +254,7 @@ const getMonth = (d) => new Date(d).getMonth() + 1;
 
 .section-card { border-radius: 14px; }
 .card-head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
 
 .desc-text { font-size: 15px; line-height: 1.8; color: #4a5568; }
 
@@ -238,7 +300,9 @@ const getMonth = (d) => new Date(d).getMonth() + 1;
 .member-list { display: flex; flex-direction: column; gap: 10px; max-height: 380px; overflow: auto; }
 .member-item { display: flex; gap: 10px; align-items: center; padding: 6px; border-radius: 8px; }
 .member-item:hover { background: #f5f7fa; }
-.m-name { font-size: 14px; font-weight: 500; margin-bottom: 3px; }
+.m-name { font-size: 14px; font-weight: 500; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
+
+.quota-detail { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .stat-block { padding: 14px; background: #f5f7fa; border-radius: 10px; text-align: center; }

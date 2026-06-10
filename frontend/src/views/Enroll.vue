@@ -23,9 +23,14 @@
               </div>
             </div>
             <el-progress :percentage="capacityPct" :stroke-width="8" :status="capacityStatus" style="margin-top: 14px;" />
+            <div class="quota-info">
+              <el-tag type="success" effect="plain" size="small">已通过 {{ approvedCount }}</el-tag>
+              <el-tag type="warning" effect="plain" size="small">待审核 {{ pendingCount }}</el-tag>
+              <el-tag type="info" effect="plain" size="small">上限 {{ selectedClub.max_members }}</el-tag>
+            </div>
             <p class="pc-desc">{{ selectedClub.description }}</p>
-            <div class="pc-tip" v-if="selectedClub.current_members >= selectedClub.max_members">
-              <el-icon><Warning /></el-icon> 该社团名额已满
+            <div class="pc-tip" v-if="isQuotaFull">
+              <el-icon><Warning /></el-icon> 名额已被占满，请等待审核结果
             </div>
           </div>
         </el-card>
@@ -51,12 +56,16 @@
           <el-form :model="form" :rules="rules" ref="formRef" label-width="100px" size="large" label-position="right">
             <el-form-item label="选择社团" prop="club_id">
               <el-select v-model="form.club_id" placeholder="请选择要报名的社团" size="large" style="width: 100%;" @change="onClubChange" filterable>
-                <el-option v-for="c in clubs" :key="c.id" :label="c.name" :value="c.id" :disabled="c.current_members >= c.max_members">
+                <el-option v-for="c in clubs" :key="c.id" :label="c.name" :value="c.id" :disabled="isClubFull(c)">
                   <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>{{ c.name }}</span>
-                    <el-tag size="small" :type="c.current_members / c.max_members > 0.8 ? 'danger' : c.current_members / c.max_members > 0.5 ? 'warning' : 'success'" effect="plain">
-                      {{ c.current_members }}/{{ c.max_members }}
-                    </el-tag>
+                    <span :class="{ 'text-disabled': isClubFull(c) }">{{ c.name }}</span>
+                    <div class="quota-tags">
+                      <el-tag size="small" type="success" effect="plain">{{ (c.approved_members ?? c.current_members) || 0 }}</el-tag>
+                      <span class="slash">/</span>
+                      <el-tag size="small" type="warning" effect="plain">{{ c.pending_enrollments || 0 }}</el-tag>
+                      <span class="slash">/</span>
+                      <el-tag size="small" type="info" effect="plain">{{ c.max_members }}</el-tag>
+                    </div>
                   </div>
                 </el-option>
               </el-select>
@@ -114,7 +123,7 @@
               <el-input v-model="form.skills" type="textarea" :rows="3" placeholder="如有相关特长或技能请填写（选填）" maxlength="300" show-word-limit />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="submitting" size="large" @click="handleSubmit" :disabled="!selectedClub || selectedClub.current_members >= selectedClub.max_members">
+              <el-button type="primary" :loading="submitting" size="large" @click="handleSubmit" :disabled="!selectedClub || isQuotaFull">
                 <el-icon><Promotion /></el-icon> 提交报名
               </el-button>
               <el-button size="large" @click="resetForm">重置</el-button>
@@ -176,7 +185,27 @@ const selectedClub = computed(() => {
   const c = clubs.value.find(c => c.id === form.club_id);
   return c ? c : null;
 });
-const capacityPct = computed(() => selectedClub.value?.max_members ? Math.round(selectedClub.value.current_members / selectedClub.value.max_members * 100) : 0);
+const approvedCount = computed(() => {
+  const c = selectedClub.value;
+  if (!c) return 0;
+  return (c.approved_members ?? c.current_members) || 0;
+});
+const pendingCount = computed(() => selectedClub.value?.pending_enrollments || 0);
+const isQuotaFull = computed(() => {
+  const c = selectedClub.value;
+  if (!c) return false;
+  return approvedCount.value + pendingCount.value >= c.max_members;
+});
+const isClubFull = (c) => {
+  const approved = (c.approved_members ?? c.current_members) || 0;
+  const pending = c.pending_enrollments || 0;
+  return approved + pending >= c.max_members;
+};
+const capacityPct = computed(() => {
+  const c = selectedClub.value;
+  if (!c?.max_members) return 0;
+  return Math.round((approvedCount.value + pendingCount.value) / c.max_members * 100);
+});
 const capacityStatus = computed(() => capacityPct.value > 80 ? 'exception' : capacityPct.value > 50 ? 'warning' : 'success');
 
 const fetchClubs = async () => {
@@ -232,8 +261,8 @@ const handleSubmit = async () => {
   }
   const valid = await formRef.value.validate().catch(() => false);
   if (!valid) return;
-  if (selectedClub.value.current_members >= selectedClub.value.max_members) {
-    ElMessage.warning('该社团名额已满，请选择其他社团');
+  if (isQuotaFull.value) {
+    ElMessage.warning('名额已被占满，请等待审核结果');
     return;
   }
   submitting.value = true;
@@ -262,8 +291,13 @@ const handleSubmit = async () => {
 .pc-logo img { width: 100%; height: 100%; }
 .pc-detail h3 { font-size: 17px; font-weight: 600; margin-bottom: 2px; }
 .pc-p { font-size: 12px; color: #909399; }
+.quota-info { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .pc-desc { margin-top: 12px; font-size: 13px; color: #606266; line-height: 1.6; padding: 10px; background: #f5f7fa; border-radius: 8px; }
 .pc-tip { margin-top: 10px; padding: 10px; background: #fef0f0; color: #f56c6c; border-radius: 8px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+
+.quota-tags { display: flex; align-items: center; gap: 4px; }
+.quota-tags .slash { color: #c0c4cc; font-size: 12px; }
+.text-disabled { color: #c0c4cc; text-decoration: line-through; }
 
 .tips-card { border-radius: 12px; }
 .tips-list { padding-left: 18px; font-size: 13px; color: #606266; line-height: 2; }
