@@ -126,7 +126,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import request from '@/utils/request';
 
@@ -135,7 +135,7 @@ const router = useRouter();
 const loading = ref(false);
 const club = ref(null);
 
-onMounted(async () => {
+const fetchClub = async () => {
   loading.value = true;
   try {
     const res = await request.get(`/clubs/${route.params.id}`);
@@ -143,6 +143,21 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const handleVisibility = () => {
+  if (!document.hidden) {
+    fetchClub();
+  }
+};
+
+onMounted(async () => {
+  await fetchClub();
+  document.addEventListener('visibilitychange', handleVisibility);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', handleVisibility);
 });
 
 const goEnroll = () => router.push(`/enroll/${club.value.id}`);

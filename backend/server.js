@@ -6,7 +6,7 @@ require('./database');
 
 const app = express();
 
-app.use(cors({ origin: ['http://localhost:3612', 'http://127.0.0.1:3612'], credentials: true }));
+app.use(cors({ origin: /^http:\/\/(localhost|127\.0\.0\.1|198\.18\.0\.1):\d+$/, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

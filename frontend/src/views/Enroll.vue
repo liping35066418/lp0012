@@ -7,21 +7,11 @@
 
     <el-row :gutter="24">
       <el-col :span="8">
-        <el-card class="club-info-card">
+        <el-card v-if="selectedClub" class="club-info-card">
           <template #header>
-            <div class="card-head"><el-icon><OfficeBuilding /></el-icon>选择社团</div>
+            <div class="card-head"><el-icon><OfficeBuilding /></el-icon>社团信息</div>
           </template>
-          <el-select v-model="selectedClubId" placeholder="请选择社团" size="large" style="width: 100%;" @change="onClubChange">
-            <el-option v-for="c in clubs" :key="c.id" :label="c.name" :value="c.id" :disabled="c.current_members >= c.max_members">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span>{{ c.name }}</span>
-                <el-tag size="small" :type="c.current_members / c.max_members > 0.8 ? 'danger' : c.current_members / c.max_members > 0.5 ? 'warning' : 'success'" effect="plain">
-                  {{ c.current_members }}/{{ c.max_members }}
-                </el-tag>
-              </div>
-            </el-option>
-          </el-select>
-          <div v-if="selectedClub" class="club-preview">
+          <div class="club-preview">
             <div class="pc-banner" :style="{ backgroundImage: `url(${selectedClub.banner || selectedClub.logo})` }" />
             <div class="pc-info">
               <div class="pc-logo">
@@ -40,7 +30,7 @@
           </div>
         </el-card>
 
-        <el-card class="mt-20 tips-card">
+        <el-card class="tips-card" :class="{ 'mt-20': selectedClub }">
           <template #header>
             <div class="card-head"><el-icon><InfoFilled /></el-icon>报名须知</div>
           </template>
@@ -59,6 +49,18 @@
             <div class="card-head"><el-icon><Edit /></el-icon>填写报名信息</div>
           </template>
           <el-form :model="form" :rules="rules" ref="formRef" label-width="100px" size="large" label-position="right">
+            <el-form-item label="选择社团" prop="club_id">
+              <el-select v-model="form.club_id" placeholder="请选择要报名的社团" size="large" style="width: 100%;" @change="onClubChange" filterable>
+                <el-option v-for="c in clubs" :key="c.id" :label="c.name" :value="c.id" :disabled="c.current_members >= c.max_members">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>{{ c.name }}</span>
+                    <el-tag size="small" :type="c.current_members / c.max_members > 0.8 ? 'danger' : c.current_members / c.max_members > 0.5 ? 'warning' : 'success'" effect="plain">
+                      {{ c.current_members }}/{{ c.max_members }}
+                    </el-tag>
+                  </div>
+                </el-option>
+              </el-select>
+            </el-form-item>
             <el-row :gutter="16">
               <el-col :span="12">
                 <el-form-item label="姓名" prop="real_name">
@@ -112,7 +114,7 @@
               <el-input v-model="form.skills" type="textarea" :rows="3" placeholder="如有相关特长或技能请填写（选填）" maxlength="300" show-word-limit />
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="submitting" size="large" @click="handleSubmit" :disabled="selectedClub.current_members >= selectedClub.max_members">
+              <el-button type="primary" :loading="submitting" size="large" @click="handleSubmit" :disabled="!selectedClub || selectedClub.current_members >= selectedClub.max_members">
                 <el-icon><Promotion /></el-icon> 提交报名
               </el-button>
               <el-button size="large" @click="resetForm">重置</el-button>
@@ -125,7 +127,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import request from '@/utils/request';
@@ -137,9 +139,13 @@ const store = useUserStore();
 const formRef = ref();
 const submitting = ref(false);
 const clubs = ref([]);
-const selectedClubId = ref(route.params.clubId ? Number(route.params.clubId) : null);
+const selectedClubId = computed({
+  get: () => form.club_id,
+  set: (val) => { form.club_id = val; }
+});
 
 const form = reactive({
+  club_id: route.params.clubId ? Number(route.params.clubId) : null,
   real_name: '',
   gender: '',
   student_id: '',
@@ -152,6 +158,7 @@ const form = reactive({
 });
 
 const rules = {
+  club_id: [{ required: true, message: '请选择要报名的社团', trigger: 'change' }],
   real_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   gender: [{ required: true, message: '请选择性别', trigger: 'change' }],
   student_id: [{ required: true, message: '请输入学号', trigger: 'blur' }],
@@ -165,22 +172,40 @@ const rules = {
   reason: [{ required: true, message: '请填写报名理由', trigger: 'blur' }]
 };
 
-const selectedClub = computed(() => clubs.value.find(c => c.id === selectedClubId.value) || {});
+const selectedClub = computed(() => {
+  const c = clubs.value.find(c => c.id === form.club_id);
+  return c ? c : null;
+});
 const capacityPct = computed(() => selectedClub.value?.max_members ? Math.round(selectedClub.value.current_members / selectedClub.value.max_members * 100) : 0);
 const capacityStatus = computed(() => capacityPct.value > 80 ? 'exception' : capacityPct.value > 50 ? 'warning' : 'success');
 
-onMounted(async () => {
+const fetchClubs = async () => {
   const res = await request.get('/clubs');
   clubs.value = res.data || [];
+};
+
+const handleVisibility = () => {
+  if (!document.hidden) {
+    fetchClubs();
+  }
+};
+
+onMounted(async () => {
+  await fetchClubs();
   if (store.isLogin && store.user) {
     form.real_name = store.user.real_name || '';
     form.phone = store.user.phone || '';
     form.email = store.user.email || '';
   }
+  document.addEventListener('visibilitychange', handleVisibility);
 });
 
-const onClubChange = () => {
-  router.replace(`/enroll/${selectedClubId.value}`);
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', handleVisibility);
+});
+
+const onClubChange = (val) => {
+  router.replace(`/enroll/${val}`);
 };
 
 watch(selectedClub, (c) => {
@@ -194,7 +219,7 @@ const resetForm = () => {
 };
 
 const handleSubmit = async () => {
-  if (!selectedClubId.value) {
+  if (!form.club_id) {
     ElMessage.warning('请先选择要报名的社团');
     return;
   }
@@ -213,7 +238,7 @@ const handleSubmit = async () => {
   }
   submitting.value = true;
   try {
-    await request.post('/enrollments', { club_id: selectedClubId.value, ...form });
+    await request.post('/enrollments', { club_id: form.club_id, ...form });
     ElMessage.success('报名提交成功！等待审核中');
     router.push('/my-enrollments');
   } finally {

@@ -46,7 +46,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import request from '@/utils/request';
 
 const loading = ref(false);
@@ -62,7 +62,20 @@ const fetchList = async () => {
   }
 };
 
-onMounted(fetchList);
+const handleVisibility = () => {
+  if (!document.hidden) {
+    fetchList();
+  }
+};
+
+onMounted(() => {
+  fetchList();
+  document.addEventListener('visibilitychange', handleVisibility);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', handleVisibility);
+});
 </script>
 
 <style scoped>
